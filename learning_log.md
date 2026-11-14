@@ -9,3 +9,10 @@
 - Created `schema/create_tables.sql` with primary and foreign key constraints, plus a temporary `stg_superstore` staging table.
 - Wrote `schema/load_data.sql` to import the CSV, transform date fields into `YYYY-MM-DD` format, populate all 4 tables, and clean up staging.
 - Successfully built `sales.db` with 793 customers, 1,862 products, 5,009 orders, and 9,994 order items.
+
+## 2026-11-14
+- Created `queries/cte.sql` to analyze customer revenue concentration and discount sensitivity using Common Table Expressions.
+- Identified the top 10 customers by revenue and calculated their individual share of total sales (Sean Miller leads at $25,043, or 1.09%).
+- Grouped order items into 4 discount bands (none, 1-20%, 21-40%, >40%) to evaluate impact on profitability.
+- Discovered that profit margins plunge into severe negative territory once discounts exceed 20% (-15.3% margin for 21-40%, and -77.4% margin for >40%).
+- Confirmed that heavy discounting is the root cause of losses in sub-categories like Tables (26.1% avg discount, -8.6% margin) and Bookcases (21.1% avg discount, -3.0% margin).

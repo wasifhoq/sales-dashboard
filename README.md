@@ -2,7 +2,7 @@
 
 A normalized SQLite database built from a flat retail sales CSV, with SQL queries (joins, CTEs, window functions) that answer business questions about revenue and profit.
 
-**Status:** In progress. The schema, ERD, data load and join queries are done. CTE queries, window-function queries and the dashboard are still to come (see [Roadmap](#roadmap)).
+**Status:** In progress. The schema, ERD, data load, and CTE queries are done. Window-function queries and the dashboard are up next (see [Roadmap](#roadmap)).
 
 ## Problem
 
@@ -66,31 +66,68 @@ Total sales: 2,297,200.86. Total profit: 286,397.02 (overall margin about 12.5%)
 
 ## Results so far
 
-From the join queries in [`queries/01_joins.sql`](queries/01_joins.sql):
+### 1. From CTE Queries ([`queries/cte.sql`](queries/cte.sql))
 
-**Revenue and margin by customer segment**
+**Top 10 customers by revenue and share of total sales:**
+
+| Customer Name | Segment | Revenue | % of Total Sales |
+|---|---|---|---|
+| Sean Miller | Home Office | $25,043.05 | 1.09% |
+| Tamara Chand | Corporate | $19,052.22 | 0.83% |
+| Raymond Buch | Consumer | $15,117.34 | 0.66% |
+| Tom Ashbrook | Home Office | $14,595.62 | 0.64% |
+| Adrian Barton | Consumer | $14,473.57 | 0.63% |
+| Ken Lonsdale | Consumer | $14,175.23 | 0.62% |
+| Sanjit Chand | Consumer | $14,142.33 | 0.62% |
+| Hunter Lopez | Consumer | $12,873.30 | 0.56% |
+| Sanjit Engle | Consumer | $12,209.44 | 0.53% |
+| Christopher Conant | Consumer | $12,129.07 | 0.53% |
+
+*Revenue is well-diversified: even the single largest customer accounts for just over 1% of total sales.*
+
+**Do bigger discounts hurt profit? (Discount Sensitivity):**
+
+| Discount Band | Order Lines | Revenue | Profit | Profit Margin |
+|---|---|---|---|---|
+| 1) No discount | 4,798 | $1,087,908.47 | $320,987.60 | **+29.5%** |
+| 2) 1–20% | 3,803 | $846,522.24 | $100,785.47 | **+11.9%** |
+| 3) 21–40% | 460 | $234,137.90 | -$35,817.47 | **-15.3%** |
+| 4) Over 40% | 933 | $128,632.25 | -$99,558.59 | **-77.4%** |
+
+*Discounts up to 20% remain healthy. Once discounts exceed 20%, every additional dollar sold loses money; discounts over 40% result in a devastating -77.4% margin.*
+
+**Loss-making sub-categories vs. average discounts:**
+
+| Sub-Category | Revenue | Profit Margin | Avg Discount |
+|---|---|---|---|
+| Tables | $206,965.53 | -8.6% | 26.1% |
+| Bookcases | $114,880.00 | -3.0% | 21.1% |
+| Supplies | $46,673.54 | -2.5% | 7.7% |
+| Machines | $189,238.63 | +1.8% | 30.6% |
+| Chairs | $328,449.10 | +8.1% | 17.0% |
+| Storage | $223,843.61 | +9.5% | 7.5% |
+
+*The loss-making sub-categories (Tables and Bookcases) receive unusually high average discounts (21%–26%), putting them right into the negative margin threshold identified above.*
+
+### 2. Segment & Geographic Overview
+
+**Revenue and margin by customer segment:**
 
 | Segment | Revenue | Profit margin |
 |---|---|---|
-| Consumer | 1,161,401 | 11.5% |
-| Corporate | 706,146 | 13.0% |
-| Home Office | 429,653 | 14.0% |
+| Consumer | $1,161,401 | 11.5% |
+| Corporate | $706,146 | 13.0% |
+| Home Office | $429,653 | 14.0% |
 
 Consumer brings in the most revenue, but Home Office has the highest margin.
 
-**Loss-making sub-categories**
+**Top states by revenue:** California (~$457,688), New York (~$310,876) and Texas (~$170,188). Average time from order to shipping is about 4 days in each of the top five states.
 
-- Tables: -8.6% margin (about -17,725 profit on about 206,966 revenue)
-- Bookcases: -3.0% margin
-- Supplies: -2.5% margin
+## Business recommendations
 
-All other sub-categories are profitable.
-
-**Top states by revenue:** California (about 457,688), New York (about 310,876) and Texas (about 170,188). Average time from order to shipping is about 4 days in each of the top five states.
-
-## Business recommendation (preliminary)
-
-Tables and Bookcases generate substantial revenue but lose money, so they are the first place to look when trying to improve profit. This analysis shows *where* money is lost, not *why*. The next check is whether discount levels explain the losses, which I have not tested yet.
+1. **Cap promotional discounts at 20%:** The data shows clear proof that discounting beyond 20% destroys profitability (-$135k lost across bands 3 & 4). 
+2. **Re-evaluate pricing on Tables and Bookcases:** These two sub-categories generate over $320k in revenue but operate at a combined loss due to heavy average discounting (21%–26%). Capping discounts or eliminating promotions on Tables would immediately turn them profitable.
+3. **Protect Home Office & Corporate accounts:** While Consumer represents the bulk of volume, Home Office delivers the highest profit margin (14.0%) and includes top enterprise buyers like Sean Miller.
 
 ## Limitations
 
@@ -104,10 +141,10 @@ Tables and Bookcases generate substantial revenue but lose money, so they are th
 - [x] Normalized schema and ERD
 - [x] Data cleaning and load, with validation
 - [x] Join queries
-- [ ] CTE queries (for example, top 10 customers and their share of total sales)
+- [x] CTE queries (top customers & share of sales, discount sensitivity bands, sub-category discount analysis)
+- [x] Check whether discounts explain the loss-making sub-categories (confirmed: avg discounts >20% cause negative margins)
 - [ ] Window-function queries (running monthly totals, product rank within category, year-over-year growth with `LAG()`)
 - [ ] Dashboard in Tableau or R
-- [ ] Check whether discounts explain the loss-making sub-categories
 
 ## Project structure
 
@@ -124,7 +161,7 @@ Tables and Bookcases generate substantial revenue but lose money, so they are th
 │   ├── load_data.sql
 │   └── ERD.png
 ├── queries/
-│   └── 01_joins.sql
+│   └── cte.sql
 └── dashboard/
 ```
 
@@ -143,7 +180,7 @@ You need Python 3 and the SQLite command-line tool (version 3.25 or later, for w
    ```
 4. Run any query file, for example:
    ```
-   sqlite3 -header -column sales.db ".read queries/01_joins.sql"
+   sqlite3 -header -column sales.db ".read queries/cte.sql"
    ```
 
 ## Tools
