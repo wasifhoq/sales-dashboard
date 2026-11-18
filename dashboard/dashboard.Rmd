@@ -1,0 +1,315 @@
+---
+title: "Superstore Sales Analytics & Performance Dashboard"
+subtitle: "Retail Performance, Discount Sensitivity, and Profitability Analysis"
+author: "Wasif Hoq"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 5.2,
+  dpi = 300
+)
+
+library(DBI)
+library(RSQLite)
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+# Connect to sales.db (resolves path whether knit from root or dashboard folder)
+db_path <- if (file.exists("../sales.db")) "../sales.db" else "sales.db"
+con <- dbConnect(RSQLite::SQLite(), db_path)
+```
+
+# 1. Executive Summary & Core KPIs
+
+This dashboard queries the normalized SQLite database (`sales.db`) containing 9,994 order records from the US Superstore retail dataset. The analysis evaluates revenue trajectories, discount thresholds, sub-category profit contributions, and customer segment dynamics across the 2014–2017 operating period.
+
+```{r kpis}
+q_kpis <- "
+SELECT 
+    ROUND(SUM(sales), 2) AS total_sales,
+    ROUND(SUM(profit), 2) AS total_profit,
+    ROUND(100.0 * SUM(profit) / SUM(sales), 1) AS overall_margin_pct,
+    (SELECT COUNT(DISTINCT order_id) FROM orders) AS total_orders,
+    (SELECT COUNT(DISTINCT customer_id) FROM customers) AS total_customers
+FROM order_items;
+"
+kpis <- dbGetQuery(con, q_kpis)
+knitr::kable(kpis, col.names = c("Total Revenue ($)", "Total Profit ($)", "Profit Margin (%)", "Total Orders", "Unique Customers"), format.args = list(big.mark = ","))
+```
+
+---
+
+# 2. Chart 1: Monthly Revenue and Profit Over Time
+
+Tracks monthly sales and operating profit across all 48 months (January 2014 to December 2017) to uncover seasonality and margin stability.
+
+```{r chart1_monthly}
+q_monthly <- "
+SELECT 
+    substr(o.order_date, 1, 7) AS month,
+    SUM(oi.sales)              AS revenue,
+    SUM(oi.profit)             AS profit
+FROM order_items oi
+JOIN orders o ON o.order_id = oi.order_id
+GROUP BY substr(o.order_date, 1, 7)
+ORDER BY month;
+"
+df_monthly <- dbGetQuery(con, q_monthly) %>%
+  mutate(date = as.Date(paste0(month, "-01")))
+
+ggplot(df_monthly, aes(x = date)) +
+  geom_line(aes(y = revenue, color = "Revenue"), linewidth = 1) +
+  geom_point(aes(y = revenue, color = "Revenue"), size = 1.8) +
+  geom_line(aes(y = profit, color = "Profit"), linewidth = 1) +
+  geom_point(aes(y = profit, color = "Profit"), size = 1.8) +
+  scale_y_continuous(labels = label_dollar(scale = 1e-3, suffix = "k")) +
+  scale_x_date(date_breaks = "6 months", date_labels = "%b %Y") +
+  scale_color_manual(values = c("Revenue" = "#1f77b4", "Profit" = "#2ca02c")) +
+  labs(
+    title = "Monthly Revenue and Profit Over Time (2014–2017)",
+    subtitle = "Consistent Q4 holiday demand peaks with stable positive operating profit",
+    x = "Order Month",
+    y = "Amount ($USD)",
+    color = "Metric"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# 3. Chart 2: Profit Margin by Discount Level
+
+Tests whether aggressive pricing impairs bottom-line profitability by segmenting transactions into 4 discount tiers: **No discount**, **1–20%**, **21–40%**, and **Over 40%**.
+
+```{r chart2_discount}
+q_discount <- "
+WITH banded AS (
+    SELECT
+        CASE
+            WHEN discount = 0    THEN '1) No discount'
+            WHEN discount <= 0.2 THEN '2) 1–20%'
+            WHEN discount <= 0.4 THEN '3) 21–40%'
+            ELSE                      '4) Over 40%'
+        END AS discount_band,
+        sales,
+        profit
+    FROM order_items
+)
+SELECT
+    discount_band,
+    SUM(sales)  AS revenue,
+    SUM(profit) AS profit,
+    ROUND(100.0 * SUM(profit) / SUM(sales), 1) AS margin_pct
+FROM banded
+GROUP BY discount_band
+ORDER BY discount_band;
+"
+df_discount <- dbGetQuery(con, q_discount) %>%
+  mutate(
+    status = ifelse(margin_pct >= 0, "Profitable", "Loss-Making"),
+    label = sprintf("%+.1f%%", margin_pct)
+  )
+
+ggplot(df_discount, aes(x = discount_band, y = margin_pct, fill = status)) +
+  geom_col(width = 0.55, show.legend = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.6) +
+  geom_text(
+    aes(
+      label = label,
+      vjust = ifelse(margin_pct >= 0, -0.6, 1.4)
+    ),
+    fontface = "bold",
+    size = 4
+  ) +
+  scale_fill_manual(values = c("Profitable" = "#1f77b4", "Loss-Making" = "#d9534f")) +
+  scale_y_continuous(
+    labels = label_percent(scale = 1),
+    limits = c(-90, 40)
+  ) +
+  labs(
+    title = "Profit Margin by Discount Level",
+    subtitle = "Profitability collapses into severe negative territory beyond a 20% discount rate",
+    x = "Discount Band",
+    y = "Profit Margin (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# 4. Chart 3: Profit by Sub-Category (Losses in Red)
+
+Breaks down cumulative profit across all 17 product sub-categories, applying conditional red highlighting to immediately isolate deficit drivers.
+
+```{r chart3_subcategory, fig.height=6.5}
+q_subcat <- "
+SELECT 
+    p.sub_category,
+    ROUND(SUM(oi.profit), 2) AS profit,
+    ROUND(SUM(oi.sales), 2)  AS revenue,
+    ROUND(100.0 * SUM(oi.profit) / SUM(oi.sales), 1) AS margin_pct
+FROM order_items oi
+JOIN products p ON p.product_id = oi.product_id
+GROUP BY p.sub_category
+ORDER BY profit ASC;
+"
+df_subcat <- dbGetQuery(con, q_subcat) %>%
+  mutate(
+    sub_category = reorder(sub_category, profit),
+    loss_flag = ifelse(profit < 0, "Loss", "Profit"),
+    label = ifelse(profit < 0,
+                   sprintf("-$%s (%.1f%%)", format(round(abs(profit)), big.mark = ","), margin_pct),
+                   sprintf("+$%s (%.1f%%)", format(round(profit), big.mark = ","), margin_pct))
+  )
+
+ggplot(df_subcat, aes(x = profit, y = sub_category, fill = loss_flag)) +
+  geom_col(width = 0.7, show.legend = FALSE) +
+  geom_vline(xintercept = 0, linetype = "solid", color = "gray40", linewidth = 0.5) +
+  geom_text(
+    aes(
+      label = label,
+      hjust = ifelse(profit < 0, 1.1, -0.1)
+    ),
+    size = 3.3,
+    fontface = "bold"
+  ) +
+  scale_fill_manual(values = c("Loss" = "#d9534f", "Profit" = "#2c7bb6")) +
+  scale_x_continuous(
+    labels = label_dollar(scale = 1e-3, suffix = "k"),
+    expand = expansion(mult = c(0.18, 0.22))
+  ) +
+  labs(
+    title = "Total Profit by Sub-Category (Losses in Red)",
+    subtitle = "Tables (-$17.7k), Bookcases (-$3.5k), and Supplies (-$1.2k) operate at persistent net losses",
+    x = "Cumulative Profit ($USD)",
+    y = "Sub-Category"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# 5. Chart 4: Revenue by Customer Segment (Labelled with Margin)
+
+Analyzes commercial sales volume and profit margin percentages across customer segments (**Consumer**, **Corporate**, and **Home Office**).
+
+```{r chart4_segment}
+q_segment <- "
+SELECT 
+    c.segment,
+    SUM(oi.sales)  AS revenue,
+    SUM(oi.profit) AS profit,
+    ROUND(100.0 * SUM(oi.profit) / SUM(oi.sales), 1) AS margin_pct
+FROM order_items oi
+JOIN orders o ON o.order_id = oi.order_id
+JOIN customers c ON c.customer_id = o.customer_id
+GROUP BY c.segment
+ORDER BY revenue DESC;
+"
+df_segment <- dbGetQuery(con, q_segment) %>%
+  mutate(
+    segment = reorder(segment, -revenue),
+    label = sprintf("$%s\n(Margin: %.1f%%)", format(round(revenue), big.mark = ","), margin_pct)
+  )
+
+ggplot(df_segment, aes(x = segment, y = revenue, fill = segment)) +
+  geom_col(width = 0.55, show.legend = FALSE) +
+  geom_text(aes(label = label), vjust = -0.3, size = 4, fontface = "bold", lineheight = 0.9) +
+  scale_fill_manual(values = c("Consumer" = "#386cb0", "Corporate" = "#7fc97f", "Home Office" = "#fdc086")) +
+  scale_y_continuous(
+    labels = label_dollar(scale = 1e-6, suffix = "M"),
+    limits = c(0, 1.4e6)
+  ) +
+  labs(
+    title = "Total Revenue by Customer Segment (Labelled with Margin %)",
+    subtitle = "Consumer generates primary gross volume, but Home Office provides the highest profit margin",
+    x = "Customer Segment",
+    y = "Total Revenue ($USD)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank()
+  )
+```
+
+---
+
+# 6. Chart 5: Annual Revenue & YoY Growth (%)
+
+Evaluates macro year-over-year expansion using SQLite's `LAG()` window function.
+
+```{r chart5_yearly}
+q_yearly <- "
+WITH yearly AS (
+    SELECT
+        substr(o.order_date, 1, 4) AS year,
+        SUM(oi.sales)              AS revenue,
+        SUM(oi.profit)             AS profit
+    FROM order_items oi
+    JOIN orders o ON o.order_id = oi.order_id
+    GROUP BY substr(o.order_date, 1, 4)
+)
+SELECT
+    year,
+    revenue,
+    profit,
+    COALESCE(ROUND(100.0 * (revenue - LAG(revenue) OVER (ORDER BY year))
+             / LAG(revenue) OVER (ORDER BY year), 1), 0.0) AS yoy_growth_pct
+FROM yearly
+ORDER BY year;
+"
+df_yearly <- dbGetQuery(con, q_yearly) %>%
+  mutate(
+    label = ifelse(yoy_growth_pct == 0,
+                   sprintf("$%sk\n(Baseline)", round(revenue / 1000)),
+                   sprintf("$%sk\n(YoY: %+.1f%%)", round(revenue / 1000), yoy_growth_pct))
+  )
+
+ggplot(df_yearly, aes(x = year, y = revenue)) +
+  geom_col(fill = "#4a7bb0", width = 0.55) +
+  geom_text(aes(label = label), vjust = -0.3, size = 3.8, fontface = "bold", lineheight = 0.9) +
+  scale_y_continuous(
+    labels = label_dollar(scale = 1e-3, suffix = "k"),
+    limits = c(0, 8.5e5)
+  ) +
+  labs(
+    title = "Annual Revenue & Year-over-Year Growth (YoY %)",
+    subtitle = "Calculated via SQL LAG() window function; shows solid acceleration after 2015",
+    x = "Year",
+    y = "Total Revenue ($USD)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r cleanup, include=FALSE}
+dbDisconnect(con)
+```

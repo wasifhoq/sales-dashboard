@@ -22,4 +22,4 @@
 - Built the dashboard pipeline in R (`dashboard/generate_charts.R`) connecting directly to `sales.db` via `DBI` and `RSQLite`.
 - Generated 5 core analytical charts with `ggplot2` visualizing monthly trends, discount sensitivity, subcategory profits, customer segments, and annual growth.
 - Applied conditional styling in subcategory analysis to clearly highlight loss-making categories (Tables, Bookcases, Supplies) in red.
-- Packaged the visualization suite into a clean Bootstrap 5 dashboard (`dashboard/index.html`) displaying high-level retail KPIs and charts.
+- Packaged the analytical workflow and 5 core charts into a reproducible R Markdown document (`dashboard/dashboard.Rmd`).
