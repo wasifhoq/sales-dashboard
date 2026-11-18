@@ -16,3 +16,10 @@
 - Grouped order items into 4 discount bands (none, 1-20%, 21-40%, >40%) to evaluate impact on profitability.
 - Discovered that profit margins plunge into severe negative territory once discounts exceed 20% (-15.3% margin for 21-40%, and -77.4% margin for >40%).
 - Confirmed that heavy discounting is the root cause of losses in sub-categories like Tables (26.1% avg discount, -8.6% margin) and Bookcases (21.1% avg discount, -3.0% margin).
+
+## 2026-11-18
+- Authored `queries/window.sql` covering running totals with `SUM() OVER`, product rankings with `RANK() OVER`, and YoY growth using `LAG()`.
+- Built the dashboard pipeline in R (`dashboard/generate_charts.R`) connecting directly to `sales.db` via `DBI` and `RSQLite`.
+- Generated 5 core analytical charts with `ggplot2` visualizing monthly trends, discount sensitivity, subcategory profits, customer segments, and annual growth.
+- Applied conditional styling in subcategory analysis to clearly highlight loss-making categories (Tables, Bookcases, Supplies) in red.
+- Packaged the visualization suite into a clean Bootstrap 5 dashboard (`dashboard/index.html`) displaying high-level retail KPIs and charts.
